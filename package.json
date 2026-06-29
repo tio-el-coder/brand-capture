@@ -6,7 +6,10 @@
   "license": "MIT",
   "engines": { "node": ">=18" },
   "type": "module",
-  "bin": { "brand-capture": "./dist/cli.js" },
+  "bin": {
+    "brand-capture": "./dist/cli.js",
+    "screenshot-analyze": "./dist/screenshot/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
