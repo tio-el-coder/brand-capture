@@ -1,0 +1,22 @@
+{
+  "name": "brand-capture",
+  "version": "0.1.0",
+  "description": "Extract a design system from any URL and map it to a CollectiveKit Figma file + molino-ready CSS variables.",
+  "homepage": "https://github.com/tio-el-coder/brand-capture",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "type": "module",
+  "bin": { "brand-capture": "./dist/cli.js" },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "capture": "node dist/cli.js"
+  },
+  "dependencies": {
+    "dembrandt": "^0.20.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
