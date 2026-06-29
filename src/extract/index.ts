@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { DtcgOutput } from "../types.js";
 
@@ -13,24 +13,31 @@ export interface ExtractOptions {
 /**
  * Run dembrandt against a URL and return the parsed DTCG JSON.
  * dembrandt is invoked as a subprocess so its Playwright setup stays isolated.
+ *
+ * dembrandt saves output to output/<domain>/<timestamp>.tokens.json — we
+ * find the latest file and move it to opts.outDir/design-system.dtcg.json.
  */
 export async function extract(url: string, opts: ExtractOptions): Promise<DtcgOutput> {
   mkdirSync(opts.outDir, { recursive: true });
 
-  const dtcgPath = join(opts.outDir, "design-system.dtcg.json");
-  const designMdPath = join(opts.outDir, "design-system.md");
+  const dtcgDest = join(opts.outDir, "design-system.dtcg.json");
+  const designMdDest = join(opts.outDir, "design-system.md");
+
+  const domain = new URL(url).hostname;
+
+  // dembrandt always saves to output/<domain>/ relative to CWD
+  const dembrandtOut = join(process.cwd(), "output", domain);
 
   const flags = [
-    `--dtcg`,
-    `--output "${dtcgPath}"`,
-    opts.dark ? "--dark" : "",
-    opts.scroll ? "--scroll" : "",
-    opts.cookies ? `--cookies "${opts.cookies}"` : "",
+    "--dtcg",
+    "--save-output",
+    opts.dark ? "--dark-mode" : "",
+    opts.scroll ? "--slow" : "",
+    opts.cookies ? `--cookie "${opts.cookies}"` : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  // dembrandt CLI: npx dembrandt <url> [flags]
   const cmd = `npx dembrandt "${url}" ${flags}`;
   try {
     execSync(cmd, { stdio: ["ignore", "pipe", "pipe"] });
@@ -39,19 +46,40 @@ export async function extract(url: string, opts: ExtractOptions): Promise<DtcgOu
     throw new Error(`dembrandt extraction failed for ${url}:\n${msg}`);
   }
 
-  if (!existsSync(dtcgPath)) {
-    throw new Error(`dembrandt ran but produced no DTCG output at ${dtcgPath}`);
+  // Find the latest .tokens.json in dembrandt's output dir
+  const tokenFile = findLatestFile(dembrandtOut, ".tokens.json");
+  if (!tokenFile) {
+    throw new Error(`dembrandt ran but produced no .tokens.json in ${dembrandtOut}`);
   }
 
-  const raw = JSON.parse(readFileSync(dtcgPath, "utf8")) as DtcgOutput;
+  // Move to our canonical output path
+  if (tokenFile !== dtcgDest) {
+    renameSync(tokenFile, dtcgDest);
+  }
 
-  // Also generate a DESIGN.md for AI consumption
-  const mdCmd = `npx dembrandt "${url}" --design-md --output "${designMdPath}" ${opts.dark ? "--dark" : ""}`;
-  try {
-    execSync(mdCmd, { stdio: ["ignore", "pipe", "pipe"] });
-  } catch {
-    // DESIGN.md is nice-to-have; don't fail if it errors
+  const raw = JSON.parse(readFileSync(dtcgDest, "utf8")) as DtcgOutput;
+
+  // Also generate DESIGN.md for AI consumption
+  if (!existsSync(designMdDest)) {
+    try {
+      const mdCmd = `npx dembrandt "${url}" --design-md --save-output ${opts.dark ? "--dark-mode" : ""}`;
+      execSync(mdCmd, { stdio: ["ignore", "pipe", "pipe"] });
+      const mdFile = findLatestFile(dembrandtOut, ".md");
+      if (mdFile && mdFile !== designMdDest) renameSync(mdFile, designMdDest);
+    } catch {
+      // DESIGN.md is nice-to-have; don't fail if it errors
+    }
   }
 
   return raw;
+}
+
+function findLatestFile(dir: string, ext: string): string | null {
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(ext))
+    .map((f) => join(dir, f))
+    .sort()
+    .reverse(); // ISO timestamp sort → latest first
+  return files[0] ?? null;
 }

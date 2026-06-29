@@ -101,7 +101,7 @@ async function main() {
 
   // Phase 3 — Build CollectiveKit map
   console.log("3/4  Mapping to CollectiveKit naming…");
-  const ckMap = buildCKMap(scored, tokens, warnings);
+  const ckMap = buildCKMap(scored, tokens, dtcg, warnings);
 
   const result: CaptureResult = {
     url: opts.url,

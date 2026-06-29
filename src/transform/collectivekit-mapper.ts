@@ -1,53 +1,45 @@
-import type { FlatToken, ScoredColor, CKMap } from "../types.js";
+import type { FlatToken, ScoredColor, CKMap, DtcgOutput, DtcgToken } from "../types.js";
 
-// Known font-licensing-restricted families — flag but don't block
 const PROPRIETARY_FONT_FLAGS = [
   "neue haas", "helvetica neue", "gotham", "circular", "gt walsheim",
-  "canela", "domaine", "tiempos", "graphik",
+  "canela", "domaine", "tiempos", "graphik", "sohne",
 ];
 
 /**
  * Build a CollectiveKit-aligned variable map from scored colors + flat tokens.
- * This is what gets written to both Figma and variables.css.
  */
 export function buildCKMap(
   scored: ScoredColor[],
   tokens: FlatToken[],
+  dtcg: DtcgOutput,
   warnings: string[]
 ): CKMap {
+  // Colors — use CK slot assignments from scored palette (highest score wins each slot)
   const colors: Record<string, string> = {};
-
   for (const c of scored) {
-    if (c.ckSlot !== "unmapped") {
-      // Don't overwrite a slot that's already been assigned by a higher-scored color
-      if (!colors[c.ckSlot]) {
-        colors[c.ckSlot] = c.hex;
-      }
+    if (c.ckSlot !== "unmapped" && !colors[c.ckSlot]) {
+      colors[c.ckSlot] = c.hex;
     }
   }
 
-  // Typography — extract font families and type scale
-  const fontTokens = tokens.filter((t) => t.type === "fontFamily");
-  const sizeTokens = tokens.filter((t) => t.type === "dimension" && t.path.includes("size"));
+  // Typography — read directly from dembrandt's structured output
+  const { headingFamily, paragraphFamily } = extractFontFamilies(dtcg, warnings);
+  const scale = buildTypeScale(dtcg, tokens);
 
-  const headingFamily = extractHeadingFont(fontTokens, warnings);
-  const paragraphFamily = extractBodyFont(fontTokens, headingFamily, warnings);
-
-  // Build type scale for h1–h6 + paragraph from extracted sizes
-  const scale = buildTypeScale(sizeTokens);
-
-  // Border widths
+  // Borders
   const borderTokens = tokens.filter(
-    (t) => t.type === "dimension" && t.path.toLowerCase().includes("border")
+    (t) =>
+      t.type === "dimension" &&
+      (t.path.toLowerCase().includes("border") || t.path.toLowerCase().includes("stroke"))
   );
   const borders: Record<string, number> = {};
   if (borderTokens.length > 0) {
-    // Map the smallest border to CK's "border width/xs (1)"
-    const sorted = [...borderTokens].sort(
-      (a, b) => parseFloat(a.value) - parseFloat(b.value)
-    );
-    borders["border width/xs (1)"] = parseFloat(sorted[0].value) || 1;
-    if (sorted[1]) borders["border width/sm (2)"] = parseFloat(sorted[1].value) || 2;
+    const sorted = [...borderTokens]
+      .map((t) => parseFloat(t.value))
+      .filter((v) => v > 0 && v <= 10)
+      .sort((a, b) => a - b);
+    borders["border width/xs (1)"] = sorted[0] ?? 1;
+    if (sorted[1]) borders["border width/sm (2)"] = sorted[1];
   } else {
     borders["border width/xs (1)"] = 1;
   }
@@ -59,85 +51,109 @@ export function buildCKMap(
   };
 }
 
-function extractHeadingFont(fontTokens: FlatToken[], warnings: string[]): string {
-  const headingCandidate = fontTokens.find(
-    (t) =>
-      t.path.toLowerCase().includes("heading") ||
-      t.path.toLowerCase().includes("display") ||
-      t.path.toLowerCase().includes("title")
-  );
-  const font = headingCandidate?.value ?? fontTokens[0]?.value ?? "Inter";
-  flagIfProprietary(font, warnings);
-  return font;
+function extractFontFamilies(
+  dtcg: DtcgOutput,
+  warnings: string[]
+): { headingFamily: string; paragraphFamily: string } {
+  // dembrandt puts font families at typography.font-family.*
+  const fontGroup = (dtcg as Record<string, unknown>)["typography"] as
+    | Record<string, unknown>
+    | undefined;
+  const familyGroup = fontGroup?.["font-family"] as Record<string, unknown> | undefined;
+
+  const families: string[] = [];
+  if (familyGroup) {
+    for (const val of Object.values(familyGroup)) {
+      const token = val as DtcgToken;
+      if (token && typeof token.$value === "string") {
+        families.push(token.$value);
+      }
+    }
+  }
+
+  // Fall back to fontFamily tokens from the flat list
+  if (families.length === 0) {
+    const fontTokens = Object.entries(dtcg)
+      .filter(([, v]) => isToken(v) && (v as DtcgToken).$type === "fontFamily")
+      .map(([, v]) => String((v as DtcgToken).$value));
+    families.push(...fontTokens);
+  }
+
+  const headingFamily = families[0] ?? "Inter";
+  const paragraphFamily = families[1] ?? families[0] ?? "Inter";
+
+  [headingFamily, paragraphFamily].forEach((f) => flagIfProprietary(f, warnings));
+  return { headingFamily, paragraphFamily };
 }
 
-function extractBodyFont(
-  fontTokens: FlatToken[],
-  headingFamily: string,
-  warnings: string[]
-): string {
-  const bodyCandidate = fontTokens.find(
-    (t) =>
-      t.path.toLowerCase().includes("body") ||
-      t.path.toLowerCase().includes("paragraph") ||
-      t.path.toLowerCase().includes("text")
-  );
-  // Fall back to a different font than heading, or heading itself if only one found
-  const font =
-    bodyCandidate?.value ??
-    fontTokens.find((t) => t.value !== headingFamily)?.value ??
-    headingFamily;
-  flagIfProprietary(font, warnings);
-  return font;
+function isToken(val: unknown): boolean {
+  return val !== null && typeof val === "object" && "$value" in (val as Record<string, unknown>);
 }
 
 function flagIfProprietary(font: string, warnings: string[]): void {
   const lower = font.toLowerCase();
   if (PROPRIETARY_FONT_FLAGS.some((f) => lower.includes(f))) {
     warnings.push(
-      `Font licensing: "${font}" may require a commercial license — verify before use in your brand.`
+      `Font licensing: "${font}" may require a commercial license — verify before use.`
     );
   }
 }
 
-// Map extracted size tokens to CollectiveKit h1-h6 + paragraph slots
-function buildTypeScale(sizeTokens: FlatToken[]): Record<string, number> {
+function buildTypeScale(
+  dtcg: DtcgOutput,
+  _tokens: FlatToken[]
+): Record<string, number> {
   const scale: Record<string, number> = {};
-  const sizes = sizeTokens
-    .map((t) => parseFloat(t.value))
-    .filter((v) => !isNaN(v) && v > 0)
-    .sort((a, b) => b - a); // largest first
 
-  // CollectiveKit heading slots, mapped to the top extracted sizes
-  const ckHeadings = [
-    "h1/text size",
-    "h2/text size",
-    "h3/text size",
-    "h4/text size",
-    "h5/text size",
-    "h6/text size",
-  ];
+  // dembrandt puts typography styles at typography.styles.*
+  const typoGroup = (dtcg as Record<string, unknown>)["typography"] as
+    | Record<string, unknown>
+    | undefined;
+  const stylesGroup = typoGroup?.["styles"] as Record<string, unknown> | undefined;
 
-  for (let i = 0; i < ckHeadings.length; i++) {
-    scale[ckHeadings[i]] = sizes[i] ?? fallbackSize(i);
-    // Approximate line height: text size × 1.3, rounded to nearest 4
-    scale[ckHeadings[i].replace("text size", "line height")] =
-      Math.round(((sizes[i] ?? fallbackSize(i)) * 1.3) / 4) * 4;
+  const sizes: number[] = [];
+  if (stylesGroup) {
+    for (const val of Object.values(stylesGroup)) {
+      const token = val as DtcgToken;
+      if (
+        token?.$type === "typography" &&
+        token.$value &&
+        typeof token.$value === "object" &&
+        "fontSize" in token.$value
+      ) {
+        const dim = (token.$value as { fontSize: { value: number } }).fontSize;
+        if (dim?.value) sizes.push(dim.value);
+      }
+    }
   }
 
-  // Paragraph sizes
-  const paragraphSizes = [20, 16, 14]; // lg / md / sm defaults
-  const extractedSmall = sizes.filter((s) => s <= 24).slice(0, 3);
-  ["paragraph lg", "paragraph md", "paragraph sm"].forEach((key, i) => {
-    scale[`${key}/text size`] = extractedSmall[i] ?? paragraphSizes[i];
-    scale[`${key}/line height`] =
-      Math.round(((extractedSmall[i] ?? paragraphSizes[i]) * 1.5) / 4) * 4;
+  // Deduplicate and sort largest-first
+  const unique = [...new Set(sizes)].sort((a, b) => b - a);
+
+  const headingSlots = ["h1", "h2", "h3", "h4", "h5", "h6"];
+  headingSlots.forEach((h, i) => {
+    const px = unique[i] ?? fallbackSize(i);
+    scale[`${h}/text size`] = px;
+    scale[`${h}/line height`] = Math.round((px * 1.25) / 4) * 4;
+    scale[`${h}/paragraph spacing`] = Math.round((px * 0.5) / 4) * 4;
+  });
+
+  // Paragraph: next 3 sizes after headings, or defaults
+  const paragraphSources = unique.slice(6, 9);
+  [
+    ["paragraph lg", 20],
+    ["paragraph md", 16],
+    ["paragraph sm", 14],
+  ].forEach(([key, defaultPx], i) => {
+    const px = paragraphSources[i] ?? defaultPx;
+    scale[`${key}/text size`] = px as number;
+    scale[`${key}/line height`] = Math.round(((px as number) * 1.5) / 4) * 4;
+    scale[`${key}/paragraph spacing`] = 16;
   });
 
   return scale;
 }
 
 function fallbackSize(index: number): number {
-  // Sensible defaults if extraction doesn't find enough sizes
-  return [48, 36, 30, 24, 20, 16][index] ?? 16;
+  return [48, 36, 30, 24, 20, 18][index] ?? 16;
 }

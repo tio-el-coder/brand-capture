@@ -1,21 +1,44 @@
-// W3C DTCG token structure (simplified for our use)
+// dembrandt DTCG color value — object with hex + components
+export interface DtcgColorValue {
+  colorSpace: string;
+  components: number[];
+  hex: string;
+}
+
+// dembrandt DTCG dimension value — object with value + unit
+export interface DtcgDimensionValue {
+  value: number;
+  unit: string;
+}
+
+// dembrandt DTCG typography value — composite type
+export interface DtcgTypographyValue {
+  fontFamily: string;
+  fontSize: DtcgDimensionValue;
+  fontWeight: number;
+  lineHeight: number;
+  letterSpacing: DtcgDimensionValue;
+}
+
+// W3C DTCG token structure — dembrandt uses object $values for colors/dimensions
 export interface DtcgToken {
-  $value: string | number;
-  $type: "color" | "dimension" | "fontFamily" | "fontWeight" | "number" | "string";
+  $value: string | number | DtcgColorValue | DtcgDimensionValue | DtcgTypographyValue;
+  $type: "color" | "dimension" | "fontFamily" | "fontWeight" | "number" | "string" | "typography";
   $description?: string;
 }
 
 export interface DtcgGroup {
-  [key: string]: DtcgToken | DtcgGroup;
+  [key: string]: DtcgToken | DtcgGroup | unknown;
 }
 
 export type DtcgOutput = DtcgGroup;
 
 // Flat extracted token (after flattening DTCG tree)
 export interface FlatToken {
-  path: string;       // e.g. "color.primary.500"
-  value: string;
+  path: string;         // e.g. "color.palette.palette-1"
+  value: string;        // always resolved to a string (hex for colors, px for dimensions)
   type: DtcgToken["$type"];
+  count?: number;       // dembrandt palette count from $description (colors only)
 }
 
 // A scored color with role assignment
