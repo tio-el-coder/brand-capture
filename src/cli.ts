@@ -127,15 +127,9 @@ async function main() {
 
   const figmaLog: string[] = [];
 
-  if (opts.figma) {
-    console.log("\n4b/4  Creating Figma design system file…");
-    const figmaResult = await autoCreateFigmaDS(opts.brand, ckMap, outDir);
-    if (figmaResult.fileKey !== "pending") {
-      figmaLog.push(`file key: ${figmaResult.fileKey}`);
-      figmaLog.push(`file url: ${figmaResult.fileUrl}`);
-    }
-    writeFileSync(join(outDir, "figma-sync.log"), figmaLog.join("\n"), "utf8");
-  }
+  // Always generate the Figma setup script (with or without --figma flag)
+  console.log("4b/4  Generating Figma setup script…");
+  const figmaResult = await autoCreateFigmaDS(opts.brand, ckMap, outDir);
 
   // Summary
   console.log("\n── Output ──────────────────────────────────────────────");
@@ -152,15 +146,10 @@ async function main() {
   }
 
   console.log("\n── Next steps ───────────────────────────────────────────");
-  console.log(`  1. molino init ${opts.brand}  (scaffold brand folder)`);
-  console.log(`  2. Copy ${outDir}/variables.css → brands/${opts.brand}/tokens/variables.css`);
-  if (opts.figma) {
-    console.log(`  3. Open figma-file.json → your DS file is ready`);
-    console.log(`  4. In that file → ◘ 01 Components → build component sets`);
-  } else {
-    console.log(`  3. Run with --figma to auto-create the Figma DS file`);
-  }
-  console.log("");
+  console.log(`  1. In Claude: "Create a Figma DS for ${opts.brand} using ${outDir}/figma-setup.js"`);
+  console.log(`     Or: cat ${outDir}/figma-prompt.md | pbcopy → paste into Claude`);
+  console.log(`  2. molino init ${opts.brand}  (scaffold brand folder)`);
+  console.log(`  3. Copy ${outDir}/variables.css → brands/${opts.brand}/tokens/variables.css\n`);
 }
 
 main().catch((err) => {
