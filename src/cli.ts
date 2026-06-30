@@ -5,7 +5,7 @@ import { extract } from "./extract/index.js";
 import { flattenDtcg, scorePalette } from "./transform/palette-score.js";
 import { buildCKMap } from "./transform/collectivekit-mapper.js";
 import { generateVariablesCss } from "./transform/dtcg-to-molino.js";
-import { duplicateTemplate, writeVariables } from "./figma/duplicate-template.js";
+import { autoCreateFigmaDS } from "./figma/auto-create.js";
 import type { CaptureResult } from "./types.js";
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -29,8 +29,8 @@ Usage:
 
 Options:
   --brand <name>      Brand slug (default: derived from domain)
-  --figma             Duplicate CollectiveKit template + write values to Figma
-                      Requires FIGMA_TOKEN env var
+  --figma             Create a new Figma DS file with all variables.
+                      Uses Claude CLI (auto) or saves a prompt to paste manually.
   --dark              Also extract dark-mode tokens
   --scroll            Scroll the full page before extraction (reveals below-fold components)
   --cookies <path>    Path to a cookies.json file for auth-gated pages
@@ -128,24 +128,12 @@ async function main() {
   const figmaLog: string[] = [];
 
   if (opts.figma) {
-    const figmaToken = process.env.FIGMA_TOKEN;
-    if (!figmaToken) {
-      console.error(
-        "\nError: --figma requires FIGMA_TOKEN env var with write scope.\n" +
-          "Generate a token at https://figma.com/settings → Personal access tokens"
-      );
-      process.exit(1);
+    console.log("\n4b/4  Creating Figma design system file…");
+    const figmaResult = await autoCreateFigmaDS(opts.brand, ckMap, outDir);
+    if (figmaResult.fileKey !== "pending") {
+      figmaLog.push(`file key: ${figmaResult.fileKey}`);
+      figmaLog.push(`file url: ${figmaResult.fileUrl}`);
     }
-    console.log("\n  Duplicating CollectiveKit template in Figma…");
-    const newFileKey = await duplicateTemplate(opts.brand, figmaToken);
-    await writeVariables(
-      newFileKey,
-      ckMap.colors,
-      ckMap.typography,
-      figmaToken,
-      figmaLog
-    );
-    figmaLog.unshift(`new Figma file key: ${newFileKey}`);
     writeFileSync(join(outDir, "figma-sync.log"), figmaLog.join("\n"), "utf8");
   }
 
@@ -164,12 +152,15 @@ async function main() {
   }
 
   console.log("\n── Next steps ───────────────────────────────────────────");
-  console.log(
-    `  1. Copy ${outDir}/variables.css → brands/${opts.brand}/tokens/variables.css`
-  );
-  console.log(`  2. Run: molino init ${opts.brand}  (if not already scaffolded)`);
-  console.log(`  3. Run: /design analyze ${opts.brand}  (CRO + DS audit)`);
-  console.log(`  4. Run: /design variants ${opts.brand}  (generate testable variants)\n`);
+  console.log(`  1. molino init ${opts.brand}  (scaffold brand folder)`);
+  console.log(`  2. Copy ${outDir}/variables.css → brands/${opts.brand}/tokens/variables.css`);
+  if (opts.figma) {
+    console.log(`  3. Open figma-file.json → your DS file is ready`);
+    console.log(`  4. In that file → ◘ 01 Components → build component sets`);
+  } else {
+    console.log(`  3. Run with --figma to auto-create the Figma DS file`);
+  }
+  console.log("");
 }
 
 main().catch((err) => {
