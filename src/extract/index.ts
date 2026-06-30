@@ -25,8 +25,14 @@ export async function extract(url: string, opts: ExtractOptions): Promise<DtcgOu
 
   const domain = new URL(url).hostname;
 
-  // dembrandt always saves to output/<domain>/ relative to CWD
-  const dembrandtOut = join(process.cwd(), "output", domain);
+  // dembrandt saves to output/<hostname>/ relative to CWD
+  // Check both with and without www. since dembrandt may use either
+  const hostname = new URL(url).hostname;
+  const hostnameStripped = hostname.replace(/^www\./, "");
+  const dembrandtOutWww = join(process.cwd(), "output", hostname);
+  const dembrandtOutStripped = join(process.cwd(), "output", hostnameStripped);
+  // Use whichever exists after extraction (prefer www. first since that's what dembrandt uses)
+  let dembrandtOut = dembrandtOutWww;
 
   const flags = [
     "--dtcg",
@@ -46,10 +52,12 @@ export async function extract(url: string, opts: ExtractOptions): Promise<DtcgOu
     throw new Error(`dembrandt extraction failed for ${url}:\n${msg}`);
   }
 
-  // Find the latest .tokens.json in dembrandt's output dir
-  const tokenFile = findLatestFile(dembrandtOut, ".tokens.json");
+  // Find the latest .tokens.json — check both www. and stripped paths
+  let tokenFile = findLatestFile(dembrandtOutWww, ".tokens.json");
+  if (!tokenFile) tokenFile = findLatestFile(dembrandtOutStripped, ".tokens.json");
+  if (tokenFile) dembrandtOut = tokenFile.substring(0, tokenFile.lastIndexOf("/"));
   if (!tokenFile) {
-    throw new Error(`dembrandt ran but produced no .tokens.json in ${dembrandtOut}`);
+    throw new Error(`dembrandt ran but produced no .tokens.json in ${dembrandtOutWww} or ${dembrandtOutStripped}`);
   }
 
   // Move to our canonical output path
